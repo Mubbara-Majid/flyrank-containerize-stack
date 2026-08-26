@@ -4,6 +4,9 @@ load_dotenv()
 import repository
 repository.init_db()
 
+from supabase_client import supabase
+
+
 from fastapi import FastAPI, Path
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -30,7 +33,7 @@ def hello():
 
 @app.get("/health", description="Give the status of the API.")
 def health():
-    return {"status": "OK"}
+    return {"status": "OK", "supabase_connected": supabase is not None}
 
 
 @app.get("/tasks", description="List all the tasks.")
