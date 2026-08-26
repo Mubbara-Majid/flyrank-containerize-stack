@@ -49,3 +49,15 @@ def get_task(task_id: int):
         row = cur.fetchone()
     conn.close()
     return row
+
+def create_task(title: str):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO tasks (title, done) VALUES (%s, %s) RETURNING *",
+            (title, False),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row

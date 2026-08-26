@@ -1,13 +1,17 @@
 from dotenv import load_dotenv
 load_dotenv()
+import repository
+repository.init_db()
 
 from fastapi import FastAPI, Path
 from fastapi.responses import JSONResponse
-import repository
-
-repository.init_db()
+from pydantic import BaseModel
 
 app = FastAPI()
+
+class TaskCreate(BaseModel):
+    title: str = ""
+
 
 @app.get("/", description="Endpoint describing the API.")
 def hello():
@@ -32,3 +36,14 @@ def task_id(id: int= Path(..., description="ID of the task.", example=1)):
     if task is None:
         return JSONResponse(status_code=404, content={"error": f"Task of ID {id} not found!"})
     return task
+
+@app.post("/tasks", description="Create a new task.")
+def add_task(task: TaskCreate):
+
+    if not task.title.strip():
+        return JSONResponse(status_code=400, content={"error": "Title is required"})
+
+    row = repository.create_task(task.title)
+
+    return JSONResponse(status_code=201, content=row)
+    
