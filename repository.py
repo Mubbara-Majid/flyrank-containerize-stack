@@ -50,6 +50,7 @@ def get_task(task_id: int):
     conn.close()
     return row
 
+
 def create_task(title: str):
     conn = get_connection()
     with conn.cursor() as cur:
@@ -61,3 +62,26 @@ def create_task(title: str):
     conn.commit()
     conn.close()
     return row
+
+
+def update_task(task_id: int, title: str, done: bool):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE tasks SET title = %s, done = %s WHERE id = %s RETURNING *",
+            (title, done, task_id),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row
+ 
+ 
+def delete_task(task_id: int) -> bool:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM tasks WHERE id = %s RETURNING id", (task_id,))
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row is not None
