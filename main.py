@@ -5,7 +5,7 @@ import repository
 repository.init_db()
 
 from supabase_client import supabase
-from auth import sign_up as auth_sign_up, sign_in as auth_sign_in
+from auth import sign_up as auth_sign_up, sign_in as auth_sign_in, get_token as auth_token
 
 from fastapi import FastAPI, Path, Header
 from fastapi.responses import JSONResponse, Response
@@ -55,11 +55,23 @@ def protected_profile(authorization: str = Header(None)):
             status_code=401, 
             content={"error": "Access token required"}
         )
+
+    token = authorization[7:]
+
+    try:
+        result = auth_token(token)
+
+        user = result.user
+        return {
+            "id": user.id,
+            "email": user.email,
+            "created_at": str(user.created_at)
+        }
     
-    # Placeholder for Stage 3 validation
-    return {"message": "Token format accepted. Ready for validation."}
+    except Exception:
+        return JSONResponse(status_code=401, content={"error": "Invalid or expired token!"})
 
-
+    
 #--------------------------Health Check
 @app.get("/health", description="Give the status of the API.")
 def health():
@@ -95,13 +107,13 @@ def login(credentials: LoginIn):
     except Exception as e:
         return JSONResponse(status_code=401, content={"error": "Invalid email or password"})
  
-
+# -------------------------List Tasks
 @app.get("/tasks", description="List all the tasks.")
 def tasks():
     return repository.list_tasks()
 
 
-
+# ------------------------Task by ID
 @app.get("/tasks/{id}", description="Returns task according to the ID.")
 def task_id(id: int= Path(..., description="ID of the task.", example=1)):
 
@@ -112,7 +124,7 @@ def task_id(id: int= Path(..., description="ID of the task.", example=1)):
     return task
 
 
-
+# -----------------------Create
 @app.post("/tasks", description="Create a new task.")
 def add_task(task: TaskCreate):
 
@@ -123,7 +135,7 @@ def add_task(task: TaskCreate):
 
     return JSONResponse(status_code=201, content=row)
 
-
+# -------------------Update
 @app.put("/tasks/{id}", description="Update a Task.")
 def updated_task(id: int, updated_task: TaskUpdate):
 
@@ -146,7 +158,7 @@ def updated_task(id: int, updated_task: TaskUpdate):
     updated_row = repository.update_task(id, new_title, new_done)
     return JSONResponse(status_code=200, content=updated_row)
 
-
+# -------------------------Delete
 @app.delete("/tasks/{id}", description="Delete task by ID.")
 def delete_task(id: int = Path(..., description="Task ID", example=1)):
 
