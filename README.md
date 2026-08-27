@@ -1,22 +1,33 @@
-# FlyRank Backend Track — Week 1, Assignment A3
-## Containerize your stack
+# FlyRank Backend Track — Containerized Task API with Auth
 
-A FastAPI task management API running against a real PostgreSQL database, both containerized with Docker. The whole stack — app and database — starts with a single command.
+A FastAPI task management API backed by PostgreSQL, fully containerized with Docker, and secured with Supabase Auth. The whole stack — app, database, and authentication — starts with a single command.
 
-This is the third storage swap on this API: in-memory (A1) → SQLite (A2) → containerized Postgres (this one). The endpoints and their behavior never changed across any of the three; only the storage layer underneath did.
+This project has evolved through three FlyRank assignments in one continuous repo:
 
-## Why Docker + Postgres
+| Assignment | What it added |
+|---|---|
+| A1 | In-memory CRUD API |
+| A2 | Swapped storage to SQLite |
+| A3 | Containerized with Docker + swapped storage to Postgres |
+| A4 (current) | Added Supabase authentication and protected routes |
 
-- **No local install required.** Postgres runs as a container from the official `postgres` image — nothing installed directly on the host machine, no version conflicts, no "works on my machine."
-- **One command starts everything.** `docker compose up` brings up both the app and the database together, networked so they can talk to each other.
-- **Real infrastructure, not a toy.** Postgres is the same engine behind a large share of production backends — this is the realistic version of what running a backend service actually looks like.
+The task endpoints and their behavior never changed across any of these — only the storage layer and, now, the access control around them did. Full history of each stage is in the git log, not repeated here.
 
 ## Architecture
 
-- `main.py` — FastAPI routes. Unchanged in shape from the A2 SQLite version — same paths, same status codes, same request/response shapes.
-- `repository.py` — the only file that talks to the database. Every SQL query lives here, using parameterized (`%s`) placeholders. Swapping storage engines only ever touches this file.
+- `main.py` — FastAPI routes only. Wires together the database and auth layers below.
+- `repository.py` — the only file that talks to Postgres. Every SQL query lives here, parameterized (`%s` placeholders).
+- `supabase_client.py` — initializes the Supabase client from environment variables.
+- `auth.py` — every direct Supabase Auth call (sign up, sign in, verify token, sign out) lives here.
+- `deps.py` — FastAPI dependency layer. `get_current_user` extracts and verifies a bearer token, reused across every protected route via `Depends(...)`.
 - `Dockerfile` — builds the app into its own image.
-- `compose.yaml` — defines two services, `api` and `db`, and networks them together.
+- `compose.yaml` — defines two services, `api` and `db`, networked together.
+
+## Why this stack
+
+- **Postgres in Docker**: no local database install, no version conflicts — the official `postgres` image runs as a container with a volume for persistence.
+- **One command starts everything**: `docker compose up` brings up the app and database together.
+- **Supabase Auth as the identity provider**: passwords are never stored or hashed by this code. Supabase handles accounts and issues signed JWTs; this API's job is only to verify tokens and guard routes — the correct division of responsibility for a backend that doesn't want to own password security.
 
 ## Environment variables
 
@@ -28,19 +39,23 @@ cp .env.example .env
 
 ```
 DATABASE_URL=postgres://postgres:dev@localhost:5432/tasks
+SUPABASE_URL=your_project_url
+SUPABASE_KEY=your_anon_key
 ```
 
-`.env` is git-ignored — it never gets committed. Inside `docker compose`, the `api` service gets its own `DATABASE_URL` directly from `compose.yaml`, pointing at the `db` service by name instead of `localhost` (containers on the same compose network reach each other by service name).
+`.env` is git-ignored and never committed. Use only the **anon** key from your Supabase project — never the `service_role` key, which bypasses all security and must stay server-side and secret in a real deployment.
+
+Inside `docker compose`, the `api` service gets `DATABASE_URL` directly from `compose.yaml`, pointing at the `db` service by name instead of `localhost`.
 
 ## How to run it
 
-**With Docker Compose (recommended — starts the whole stack):**
+**With Docker Compose (recommended — starts app + database together):**
 
 ```bash
 docker compose up --build
 ```
 
-The API is available at `http://localhost:8000`. Postgres is available at `localhost:5432`. On first run, the `tasks` table is created and seeded with three example tasks automatically.
+The API runs at `http://localhost:8000`. Interactive docs (Swagger UI) are at `http://localhost:8000/docs`. On first run, the `tasks` table is created and seeded with three example tasks automatically.
 
 **Locally without Compose (for development):**
 
@@ -55,36 +70,43 @@ uvicorn main:app --reload
 
 ## Endpoints
 
-| Method | Path          | Description       |
-|--------|---------------|--------------------|
-| GET    | `/tasks`      | List all tasks     |
-| GET    | `/tasks/{id}` | Get a single task  |
-| POST   | `/tasks`      | Create a task      |
-| PUT    | `/tasks/{id}` | Update a task      |
-| DELETE | `/tasks/{id}` | Delete a task      |
+| Method | Path | Description | Auth required |
+|---|---|---|---|
+| GET | `/tasks` | List all tasks | No |
+| GET | `/tasks/{id}` | Get a single task | No |
+| POST | `/tasks` | Create a task | No |
+| PUT | `/tasks/{id}` | Update a task | No |
+| DELETE | `/tasks/{id}` | Delete a task | No |
+| POST | `/auth/signup` | Create a new user account | No |
+| POST | `/auth/login` | Authenticate and receive a JWT | No |
+| POST | `/auth/logout` | End the user's session | Yes |
+| GET | `/protected/profile` | Read the current user's private profile | Yes |
+| GET | `/protected/dashboard` | Second protected route reusing the same guard | Yes |
+| GET | `/public/info` | Open, unauthenticated info | No |
 
-Status codes: `200` / `201` / `204` on success, `400` for an invalid body, `404` for an unknown id.
+Status codes: `200` / `201` / `204` on success, `400` invalid body, `401` missing/invalid/expired token, `404` unknown task id.
 
-## Example request
+## Authentication flow
 
-```bash
-curl -i http://localhost:8000/tasks
-```
+1. `POST /auth/signup` — create an account with an email and password. Supabase stores and hashes the password; this API never sees or stores it.
+2. `POST /auth/login` — exchange credentials for a JWT (`access_token` + `refresh_token`).
+3. Send the access token on every protected request: `Authorization: Bearer <token>`.
+4. The server verifies the token against Supabase on each request via `supabase.auth.get_user(token)` — a real network call, not just decoding the token locally. A tampered or expired token is rejected with `401`.
+5. `POST /auth/logout` revokes the current session.
 
-```
-HTTP/1.1 200 OK
-content-type: application/json
+The verification logic lives in one place (`deps.py`'s `get_current_user`), applied to every protected route via FastAPI's `Depends(...)` — no auth logic is duplicated per route.
 
-[{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Walk the dog","done":true},{"id":3,"title":"Finish FlyRank assignment","done":false}]
-```
+## Try it in Swagger UI
 
-## Proof the API didn't change across three storage engines
+Visit `http://localhost:8000/docs`. Protected routes show a lock icon. Click **Authorize**, paste an access token from `/auth/login`, and use **Try it out** on any protected route directly from the browser.
 
-The same request/response shapes and status codes that worked against the in-memory version (A1) and the SQLite version (A2) work identically here against Postgres. That's the actual point of separating routes from storage: the API is a stable promise to its clients, and the database underneath is an implementation detail. Identical behavior across three completely different storage engines is the proof.
+![Screenshot showing protected routes](screenshots/ss-swagger.png)
+
+## Proof the API didn't change across storage engines
+
+The same request/response shapes and status codes that worked against the in-memory version (A1) and the SQLite version (A2) work identically against Postgres (A3). Adding authentication (A4) didn't touch the task routes' internal logic either — it added new routes and a guard, without altering how `/tasks` behaves for an already-open route. Separating routes from storage and access control is what makes each of these swaps a one-file change instead of a rewrite.
 
 ## Persistence proof
 
-Two restarts were tested:
-
-1. **App restart** — created tasks, restarted `uvicorn` several times, confirmed the seed never duplicated and created tasks were still present.
-2. **Full stack restart** — created a task via `POST /tasks`, ran `docker compose down` (destroying both containers), then `docker compose up` again. The task was still present in `GET /tasks`, and the Postgres logs showed `"PostgreSQL Database directory appears to contain a database; Skipping initialization"` — confirming the named volume, not the container, is what kept the data alive.
+1. **App restart** — created tasks, restarted the server, confirmed the seed never duplicated.
+2. **Full stack restart** — created a task, ran `docker compose down` (destroying both containers), then `docker compose up`. The task was still present, and Postgres logs showed `"PostgreSQL Database directory appears to contain a database; Skipping initialization"` — confirming the named volume, not the container, is what keeps the data alive.
