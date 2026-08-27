@@ -5,9 +5,11 @@ import repository
 repository.init_db()
 
 from supabase_client import supabase
-from auth import sign_up as auth_sign_up, sign_in as auth_sign_in, get_token as auth_token
 
-from fastapi import FastAPI, Path, Header
+from auth import sign_up as auth_sign_up, sign_in as auth_sign_in, sign_out as auth_sign_out
+from deps import get_current_user
+
+from fastapi import FastAPI, Path, Depends
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -47,29 +49,17 @@ def hello():
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
+
+# ----------------------------Protected Dashboard
+@app.get("/protected/dashboard", description="Another protected route reusing the same guard.")
+def dashboard(user: dict = Depends(get_current_user)):
+    return {"message": f"Welcome to your dashboard, {user['email']}"}
+
+
 # ----------------------------Protected Profile
 @app.get("/protected/profile", description="Read private profile data.")
-def protected_profile(authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(
-            status_code=401, 
-            content={"error": "Access token required"}
-        )
-
-    token = authorization[7:]
-
-    try:
-        result = auth_token(token)
-
-        user = result.user
-        return {
-            "id": user.id,
-            "email": user.email,
-            "created_at": str(user.created_at)
-        }
-    
-    except Exception:
-        return JSONResponse(status_code=401, content={"error": "Invalid or expired token!"})
+def protected_profile(user: dict = Depends(get_current_user)):
+    return user
 
     
 #--------------------------Health Check
@@ -106,7 +96,18 @@ def login(credentials: LoginIn):
         }
     except Exception as e:
         return JSONResponse(status_code=401, content={"error": "Invalid email or password"})
- 
+
+
+ # -----------------------Sign Out
+@app.post("/auth/logout", description="Sign out the current user.")
+def logout(user: dict = Depends(get_current_user)):
+    try:
+        auth_sign_out()
+        return Response(status_code=204)
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Failed to sign out"})
+
+
 # -------------------------List Tasks
 @app.get("/tasks", description="List all the tasks.")
 def tasks():
