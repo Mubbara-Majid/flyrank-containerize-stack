@@ -7,7 +7,7 @@ repository.init_db()
 from supabase_client import supabase
 from auth import sign_up as auth_sign_up, sign_in as auth_sign_in
 
-from fastapi import FastAPI, Path
+from fastapi import FastAPI, Path, Header
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -41,6 +41,25 @@ class SignUp(BaseModel):
 def hello():
     return {"name": "Task API", "version": "1.0", "endpoints": "/, /health"}
 
+
+# -----------------------------Public Info
+@app.get("/public/info", description="Public info, no auth required.")
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+# ----------------------------Protected Profile
+@app.get("/protected/profile", description="Read private profile data.")
+def protected_profile(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401, 
+            content={"error": "Access token required"}
+        )
+    
+    # Placeholder for Stage 3 validation
+    return {"message": "Token format accepted. Ready for validation."}
+
+
 #--------------------------Health Check
 @app.get("/health", description="Give the status of the API.")
 def health():
@@ -55,7 +74,7 @@ def sign_up(credentials: SignUp):
     try:
         result = auth_sign_up(credentials.email, credentials.password)
 
-        return JSONResponse(status_code=201, content={"user": str(result.user)})
+        return JSONResponse(status_code=201, content={"user": result.user.model_dump(mode="json")})
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
